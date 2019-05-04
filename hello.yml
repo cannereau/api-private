@@ -1,0 +1,136 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: "Build a Hello World private API Gateway"
+
+Parameters:
+  Contact:
+    Type: "String"
+    Default: "cannereau"
+    Description: "Creator's username"
+  Application:
+    Type: "String"
+    Default: "API"
+    Description: "Application's name"
+  VpceStackName:
+    Type: "String"
+    Default: "api"
+    Description: "Stack's name which created VPC endpoint"    
+
+Resources:
+
+  HelloRole:
+    Type: "AWS::IAM::Role"
+    Properties:
+      RoleName: "api-private-hello"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+        - Effect: "Allow"
+          Action: "sts:AssumeRole"
+          Principal:
+            Service: "lambda.amazonaws.com"
+      Policies:
+        - PolicyName: "lambda-default"
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+            - Effect: "Allow"
+              Action:
+              - "logs:CreateLogGroup"
+              - "logs:CreateLogStream"
+              - "logs:PutLogEvents"
+              Resource:
+              - "arn:aws:logs:*:*:log-group:/aws/lambda/*"
+              - "arn:aws:logs:*:*:log-group:/aws/lambda/*:*"
+
+  HelloFunction:
+    Type: "AWS::Lambda::Function"
+    Properties:
+      FunctionName: "api-private-hello"
+      Description: "Function just to say Hello ;)"
+      Handler: "hello.handler"
+      Runtime: "python3.7"
+      MemorySize: 128
+      Timeout: 3
+      Role: !GetAtt HelloRole.Arn
+      Code:
+        ZipFile: "def handler(event, context):"
+      Tags:
+      -
+        Key: "Contact"
+        Value: !Ref Contact
+      -
+        Key: "Application"
+        Value: !Ref Application
+
+  HelloApiGateway:
+    Type: "AWS::ApiGateway::RestApi"
+    Properties:
+      Name: "hello"
+      EndpointConfiguration:
+        Types:
+          - "PRIVATE"
+      Policy:
+        Version: "2012-10-17"
+        Statement:
+        - Effect: "Deny"
+          Principal: "*"
+          Action: "execute-api:Invoke"
+          Resource: "execute-api:/prod/POST/*"
+          Condition:
+            StringNotEquals:
+              aws:sourceVpce:
+                Fn::ImportValue:
+                  !Sub "${VpceStackName}-vpce-id"
+        - Effect: "Allow"
+          Principal: "*"
+          Action: "execute-api:Invoke"
+          Resource: "execute-api:/prod/POST/*"
+
+  HelloApiMethod:
+    Type: "AWS::ApiGateway::Method"
+    Properties:
+      RestApiId: !Ref HelloApiGateway
+      ResourceId: !GetAtt HelloApiGateway.RootResourceId
+      AuthorizationType: "NONE"
+      HttpMethod: "POST"
+      Integration:
+        IntegrationHttpMethod: "POST"
+        Type: "AWS_PROXY"
+        Uri: !Sub
+          - "arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${lambdaArn}/invocations"
+          - lambdaArn: !GetAtt HelloFunction.Arn
+
+  HelloApiDeploy:
+    Type: "AWS::ApiGateway::Deployment"
+    DependsOn: HelloApiMethod
+    Properties:
+      RestApiId: !Ref HelloApiGateway
+
+  HelloApiStage:
+    Type: "AWS::ApiGateway::Stage"
+    Properties:
+      RestApiId: !Ref HelloApiGateway
+      DeploymentId: !Ref HelloApiDeploy
+      StageName: "prod"
+      Tags:
+      -
+        Key: "Contact"
+        Value: !Ref Contact
+      -
+        Key: "Application"
+        Value: !Ref Application
+
+  HelloPermission:
+    Type: "AWS::Lambda::Permission"
+    Properties:
+      FunctionName: !GetAtt HelloFunction.Arn
+      Action: "lambda:InvokeFunction"
+      Principal: "apigateway.amazonaws.com"
+      SourceArn: !Sub "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${HelloApiGateway}/*/*/*"
+
+Outputs:
+  ApiEndpoint:
+    Description: "API Gateway's endpoint"
+    Value: !Sub "https://${HelloApiGateway}.execute-api.${AWS::Region}.amazonaws.com/prod"
+    Export:
+      Name: !Sub "${AWS::StackName}-endpoint"

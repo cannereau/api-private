@@ -1,0 +1,61 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: "Build a VPC Endpoint for private API Gateways"
+
+Parameters:
+  Contact:
+    Type: "String"
+    Default: "cannereau"
+    Description: "Creator's username"
+  Application:
+    Type: "String"
+    Default: "api"
+    Description: "Application's name"
+
+Resources:
+
+  VpcSecurityGroup:
+    Type: "AWS::EC2::SecurityGroup"
+    Properties:
+      VpcId: "{{resolve:ssm:/vpc/id:1}}"
+      GroupName: "private-api-gateway"
+      GroupDescription: "Allow https to private API Gateways"
+      SecurityGroupIngress:
+      - IpProtocol: "tcp"
+        FromPort: 443
+        ToPort: 443
+        CidrIp: "0.0.0.0/0"
+      Tags:
+      -
+        Key: "Contact"
+        Value: !Ref Contact
+      -
+        Key: "Application"
+        Value: !Ref Application
+
+  VpcEndpoint:
+    Type: "AWS::EC2::VPCEndpoint"
+    Properties:
+      VpcId: "{{resolve:ssm:/vpc/id:1}}"
+      ServiceName: !Sub "com.amazonaws.${AWS::Region}.execute-api"
+      VpcEndpointType: "Interface"
+      PrivateDnsEnabled: "true"
+      SecurityGroupIds:
+      - !Ref VpcSecurityGroup
+      SubnetIds:
+      - "{{resolve:ssm:/vpc/subnet/a:1}}"
+      - "{{resolve:ssm:/vpc/subnet/b:1}}"
+      - "{{resolve:ssm:/vpc/subnet/c:1}}"
+
+Outputs:
+
+  VpcEndpointID:
+    Description: "VPC Endpoint's ID"
+    Value: !Ref VpcEndpoint
+    Export:
+      Name: !Sub "${AWS::StackName}-vpce-id"
+
+  VpcEndpointName:
+    Description: "VPC Endpoint's Name"
+    Value: !Select [ 0, !GetAtt VpcEndpoint.DnsEntries ]
+    Export:
+      Name: !Sub "${AWS::StackName}-vpce-endpoint"

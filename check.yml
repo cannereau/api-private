@@ -1,0 +1,96 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: "Build a Lambda function to check private execution of an API Gateway"
+
+Parameters:
+  Contact:
+    Type: "String"
+    Default: "cannereau"
+    Description: "Creator's username"
+  Application:
+    Type: "String"
+    Default: "API"
+    Description: "Application's name"
+
+Resources:
+
+  CheckSecurityGroup:
+    Type: "AWS::EC2::SecurityGroup"
+    Properties:
+      VpcId: "{{resolve:ssm:/vpc/id:1}}"
+      GroupName: "lambda-deny-in"
+      GroupDescription: "Deny all in Lambda function"
+      Tags:
+      -
+        Key: "Contact"
+        Value: !Ref Contact
+      -
+        Key: "Application"
+        Value: !Ref Application
+
+  CheckRole:
+    Type: "AWS::IAM::Role"
+    Properties:
+      RoleName: "api-private-check"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+        - Effect: "Allow"
+          Action: "sts:AssumeRole"
+          Principal:
+            Service: "lambda.amazonaws.com"
+      Policies:
+        - PolicyName: "lambda-default"
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+            - Effect: "Allow"
+              Action:
+              - "logs:CreateLogGroup"
+              - "logs:CreateLogStream"
+              - "logs:PutLogEvents"
+              Resource:
+              - "arn:aws:logs:*:*:log-group:/aws/lambda/*"
+              - "arn:aws:logs:*:*:log-group:/aws/lambda/*:*"
+        - PolicyName: "run-in-vpc"
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+            - Effect: "Allow"
+              Action:
+              - "ec2:CreateNetworkInterface"
+              - "ec2:DescribeNetworkInterfaces"
+              - "ec2:DeleteNetworkInterface"
+              Resource: "*"
+
+  CheckFunction:
+    Type: "AWS::Lambda::Function"
+    Properties:
+      FunctionName: "api-private-check"
+      Description: "Function to check private execution of an API Gateway"
+      Handler: "check.handler"
+      Runtime: "python3.7"
+      MemorySize: 128
+      Timeout: 30
+      Role: !GetAtt CheckRole.Arn
+      Code:
+        ZipFile: "def handler(event, context):"
+      Environment:
+        Variables:
+          VPC_ENDPOINT: ""
+          API_ENDPOINT: ""
+          PATH: "/prod"
+          METHOD: "POST"
+      VpcConfig:
+         SecurityGroupIds:
+         - !Ref CheckSecurityGroup
+         SubnetIds:
+         - "{{resolve:ssm:/vpc/subnet/a:1}}"
+         - "{{resolve:ssm:/vpc/subnet/b:1}}"
+         - "{{resolve:ssm:/vpc/subnet/c:1}}"
+      Tags:
+      -
+        Key: "Contact"
+        Value: !Ref Contact
+      -
+        Key: "Application"
+        Value: !Ref Application
